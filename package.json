@@ -1,0 +1,14 @@
+{
+  "name": "solsift",
+  "version": "1.0.0",
+  "description": "Scans newly launched Solana tokens, screens for rug-pull mechanics, scores them 0-100 and learns from its own track record.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "scan": "node scanner/index.js",
+    "serve": "node scripts/serve.js",
+    "test": "node --test"
+  },
+  "license": "MIT"
+}
