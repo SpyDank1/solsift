@@ -3,7 +3,7 @@
 Scans newly launched Solana tokens, screens them for rug-pull mechanics, scores each one 0-100, and keeps a public record of how its own scores turned out.
 
 - **Scanner** (`scanner/`): a dependency-free Node.js script that runs every 5 minutes on GitHub Actions (GitHub's minimum; real cadence is often slower).
-- **Website** (`site/`): a static page on GitHub Pages that lists the scored tokens and lets a visitor buy one with their own wallet through the Jupiter plugin.
+- **Website** (`site/`): a static page on GitHub Pages that lists the scored tokens and lets a visitor connect a wallet and buy or sell through Jupiter, non-custodially.
 - **Learning loop**: every score is re-checked 1, 6 and 24 hours later; the outcomes train a small model that gradually takes a share of the score.
 - **Live launches**: the page itself polls Jupiter every 5 seconds and scores brand-new tokens in the browser with the scanner's own rules.
 - **Paper bot**: a simulated portfolio that "buys" the high scores, so the scoring has to prove itself before anyone trusts it with money.
@@ -81,15 +81,49 @@ The live feed runs entirely in the visitor's browser (`site/app.js` imports `sca
 
 Both feeds can be filtered by platform (pump.fun, Raydium, Meteora, LetsBonk and whatever else appears), by stage (on the bonding curve or graduated), by age, by minimum score, and, for the scored feed, by tokens promoted on DEX Screener.
 
-## Buying
+## Buying and selling
 
-The Buy button opens the [Jupiter plugin](https://plugin.jup.ag/) with SOL as input and the token fixed as output. The visitor connects Phantom, Solflare or Backpack and approves the transaction in the wallet. If the plugin fails to load, the button opens the same swap on jup.ag. Flagged tokens ask for confirmation first.
+The site talks to Jupiter's Swap API V2 directly (`site/trade.js`); there is no third-party script on the page.
 
-There is deliberately **no automated trading with real funds** in this repository. That would mean storing a private key in CI, and the scores have no track record yet.
+- **Connect** Phantom, Solflare, Backpack or any other Wallet Standard wallet. The site only receives the public address.
+- **Buy** buttons (0.1 / 0.3 / 0.5 / 1 SOL by default, editable, plus a custom amount) ask Jupiter for a quote and an unsigned transaction, hand it to the wallet, and send the signed result back to Jupiter to land it. The wallet shows the transaction and nothing happens without approval there.
+- **Sell** buttons sell 25 / 50 / 75 / 100% of the balance. The **My tokens** tab lists every token in the wallet, so positions stay sellable after they leave the feeds.
+- **Settings**: slippage (Auto or fixed), priority fee (Auto or fixed, capped at 0.05 SOL), buy amounts, a price-impact prompt, and a prompt before buying flagged tokens.
+- Jupiter charges its own fee on each swap (shown as `feeBps` in its quote).
+
+The site never holds a private key, so every trade needs the wallet's approval. Wallets that offer auto-approval for trusted sites can remove that click; that is a wallet setting, not something this code does. There is deliberately **no automated trading with real funds** in this repository: that would mean storing a private key, and the scores have no track record yet.
+
+The swap path was tested end to end against a mock wallet with the send step stubbed. It has not been exercised with a real wallet and real funds by the author, so start with a small amount.
+
+## Your own filters
+
+**My filters** on the token list sets limits on the same measurements the score uses, and hides everything that breaks one: top-10 holder share, developer share, snipers, insiders and bundles, holder count, creator's launch count, liquidity, market cap range, hourly volume and trades, buy share, age, organic score, LP lock, X account age and followers, Telegram size, plus switches such as "mint authority revoked" and "no red flags". Filters are saved in the browser. Measurements that only exist after a full scan are marked and ignored in the live feed.
+
+## Live history and storage
+
+The live feeds only ever return the newest ~30 tokens, so `site/livestore.js` remembers the ones worth a second look:
+
+- Tokens that pass your filters, or score 45+, are **keepers**: held for up to 12 hours and refreshed in the background.
+- Everything else is dropped 20 minutes after it leaves the feed.
+- One compact record per token (about 1 KB). At most 5,000 tokens in memory and at most 800 keepers / 1.2 MB in `localStorage`, so a reload restores the list. Settings shows current usage and has a clear button.
 
 ## Run it yourself
 
 Requires Node.js 20 or newer. No dependencies to install.
+
+On Windows, double-click **Start SolSift.bat**. Otherwise:
+
+```bash
+npm run serve -- --open
+```
+
+The local launcher (`scripts/serve.js`):
+
+- serves the site at http://localhost:4173, reachable from this machine only;
+- runs the full scanner immediately and then every 5 minutes, so the scored feed does not depend on GitHub's scheduler;
+- if `.env` contains `JUPITER_API_KEY=...` (copy `.env.example`), proxies Jupiter requests through `/jup/*` and attaches the key on the server side. The key never reaches the browser, the public site or the repository.
+
+Other commands:
 
 ```bash
 npm test
@@ -99,13 +133,7 @@ npm test
 npm run scan
 ```
 
-```bash
-npm run serve
-```
-
-`npm run scan` writes `data/*.json`; `npm run serve` previews the site at http://localhost:4173.
-
-Optional: set a free `JUPITER_API_KEY` (from the Jupiter developer portal) as an environment variable or repository secret to double the Jupiter rate limit.
+To give the GitHub Actions scanner the same key, add it as a repository secret named `JUPITER_API_KEY`. Never put an API key in the site's code: anything served to a browser is public.
 
 ## Deployment
 
@@ -133,7 +161,11 @@ scanner/score.js    hard gates, weighted components, feature vector
 scanner/trends.js   narrative and keyword detection
 scanner/learn.js    outcome labels, logistic regression, calibration
 scanner/paper.js    simulated portfolio
-site/               static front end
+site/app.js         page logic: feeds, filters, drawer, settings
+site/trade.js       wallet connection (Wallet Standard) and Jupiter swaps
+site/userfilters.js your own filter limits
+site/livestore.js   capped live-launch history
+scripts/serve.js    local launcher: site, scanner loop, private API-key proxy
 test/               unit tests
 ```
 

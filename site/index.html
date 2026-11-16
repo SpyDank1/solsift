@@ -3,18 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- This page asks wallets to sign transactions, so it runs no inline or third-party scripts at all. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src https: data:; connect-src 'self' https://api.jup.ag https://datapi.jup.ag; frame-src https://dexscreener.com; base-uri 'none'; form-action 'none'; object-src 'none'">
 <title>SolSift - new Solana tokens, scored</title>
 <meta name="description" content="Scans newly launched Solana tokens, screens for rug-pull mechanics, scores them 0-100 and tracks how its own scores turn out.">
 <meta name="referrer" content="no-referrer">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%237c5cff'/%3E%3Cpath d='M9 20l5-8 4 5 5-8' stroke='%2319d3a2' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
-<script src="https://plugin.jup.ag/plugin-v1.js" data-preload defer></script>
 </head>
 <body>
 <div class="wrap">
   <header class="top">
     <div class="brand"><div class="logo">S</div><div>SolSift <small>new Solana tokens, scored</small></div></div>
-    <div class="status"><span class="dot" id="dot"></span><span id="scanStatus">Loading latest scan...</span></div>
+    <div class="status"><span class="chip dim" id="localBadge" hidden></span><span class="dot" id="dot"></span><span id="scanStatus">Loading latest scan...</span></div>
+    <div class="walletbox">
+      <button class="btn" id="settingsBtn" title="Trading settings: slippage, priority fee, buy amounts">Settings</button>
+      <button class="btn wallet" id="walletBtn">Connect wallet</button>
+      <div class="walletmenu" id="walletMenu"></div>
+    </div>
   </header>
 
   <div class="disclaimer">
@@ -26,6 +32,7 @@
 
   <nav class="tabs" role="tablist">
     <button class="tab on" data-view="tokens">New tokens</button>
+    <button class="tab" data-view="wallet">My tokens</button>
     <button class="tab" data-view="trends">Trends</button>
     <button class="tab" data-view="perf">Bot performance</button>
     <button class="tab" data-view="how">How it works</button>
@@ -62,8 +69,10 @@
       </select>
       <label>Min score <input type="range" id="min" min="0" max="90" step="5" value="0"><span id="minv">0</span></label>
       <label><input type="checkbox" id="hide" checked> Hide likely rugs</label>
+      <button class="btn sm" id="filterBtn" title="Set your own limits, for example top 10 holders under 15%">My filters</button>
       <span class="count" id="count"></span>
     </div>
+    <div class="filterpanel" id="filterPanel" hidden></div>
     <div class="tablewrap">
       <table>
         <thead><tr>
@@ -85,6 +94,10 @@
     </div>
   </section>
 
+  <section class="view" id="view-wallet">
+    <div class="panel"><h3>My tokens</h3><div id="holdings"><div class="empty">Connect a wallet to see and sell the tokens you hold.</div></div></div>
+  </section>
+
   <section class="view" id="view-trends">
     <div class="grid2">
       <div class="panel"><h3>Narratives getting volume</h3><p class="sub">Themes shared by many new launches, ranked by breadth, money flowing in and growth versus earlier scans. Click one to filter the token list.</p><div id="narratives"></div></div>
@@ -104,14 +117,21 @@
   <section class="view how" id="view-how">
     <div class="panel">
       <h3>What this is</h3>
-      <p>A scanner runs every 5 minutes on GitHub Actions (GitHub's minimum, and it is often slower in practice). It discovers newly launched Solana tokens, pulls market, on-chain safety and social data for each one, scores them 0-100 and publishes the result here. It remembers every score and checks back later to learn which signals actually mattered.</p>
+      <p>A scanner runs every 5 minutes. It discovers newly launched Solana tokens, pulls market, on-chain safety and social data for each one, scores them 0-100 and publishes the result here. It remembers every score and checks back later to learn which signals actually mattered.</p>
       <h3>Two feeds</h3>
       <ul>
         <li><b>Scored feed</b>: tokens that already have real trading, with every check run (on-chain risk report, LP lock, socials, sell route, trend fit). Refreshed by each full scan.</li>
-        <li><b>Live launches</b>: your browser asks Jupiter for new tokens every 5 seconds and scores them on the spot with the same rules. Those checks that need the scanner have not run yet, so a live score is a first impression. Tokens seconds old are almost always capped as high risk, because that is what they are.</li>
+        <li><b>Live launches</b>: your browser asks Jupiter for new tokens every 5 seconds and scores them on the spot with the same rules. Those checks that need the scanner have not run yet, so a live score is a first impression. Tokens that pass your filters, or score reasonably, are remembered for up to 12 hours.</li>
       </ul>
       <h3>What the score is for</h3>
-      <p>It is a 0-100 ranking of how much a token looks like something that survives versus something built to take your money. It sorts and filters the list, hides likely rugs by default, makes the Buy button ask for confirmation on flagged tokens, and decides what the paper bot "buys". It never buys anything on its own, and it is not a price prediction.</p>
+      <p>It is a 0-100 ranking of how much a token looks like something that survives versus something built to take your money. It sorts and filters the list, hides likely rugs by default, makes the Buy buttons ask for confirmation on flagged tokens, and decides what the paper bot "buys". It never buys anything on its own, and it is not a price prediction.</p>
+      <h3>Buying and selling</h3>
+      <ul>
+        <li>Connect Phantom, Solflare, Backpack or any other Solana wallet with the button at the top. The site only ever receives your public address.</li>
+        <li>A Buy button asks Jupiter for the best route, then your wallet shows you the transaction. Nothing happens unless you approve it there.</li>
+        <li>Sell buttons sell a percentage of what you hold. The <b>My tokens</b> tab lists everything in your wallet, including tokens that have left the feeds.</li>
+        <li>Slippage, priority fee, buy amounts and safety prompts are under <b>Settings</b>.</li>
+      </ul>
       <h3>How the score is built</h3>
       <ul>
         <li><b>Hard gates</b> cap the score no matter what else looks good: live freeze or mint authority, dangerous Token-2022 extensions, liquidity that can be pulled, dust liquidity, one wallet owning the supply, a creator with past rugs, or no sell route.</li>
@@ -139,6 +159,8 @@
 
 <div class="overlay" id="overlay"></div>
 <aside class="drawer" id="drawer" aria-hidden="true"></aside>
+<div class="modal" id="modal"><div class="modalbox" id="modalBody"></div></div>
+<div class="tstatus" id="tradeStatus" role="status" aria-live="polite"></div>
 <div class="toast" id="toast"></div>
 <script type="module" src="app.js"></script>
 </body>
