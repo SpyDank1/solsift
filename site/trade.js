@@ -103,16 +103,28 @@ export class TradeError extends Error {
  */
 export function createTrader(apiBase) {
   const base = String(apiBase).replace(/\/$/, '');
-  async function call(path, init) {
+  async function once(path, init) {
     let res;
     try { res = await fetch(base + path, { cache: 'no-store', signal: AbortSignal.timeout(20000), ...init }); } catch (e) {
       throw new TradeError(e && e.name === 'TimeoutError' ? 'Jupiter took too long to answer. Try again.' : 'Could not reach Jupiter. Check your connection.', { stage: 'network' });
     }
     let body = null;
     try { body = await res.json(); } catch { /* non-JSON error page */ }
-    if (res.status === 429) throw new TradeError('Jupiter rate limit reached. Wait a few seconds and try again.', { stage: 'rate', code: 429 });
+    if (res.status === 429) throw new TradeError('Jupiter is rate limiting this connection. Wait about a minute and try again, or use the local launcher with your API key.', { stage: 'rate', code: 429 });
     if (!res.ok) throw new TradeError((body && (body.error || body.message)) || `Jupiter returned an error (${res.status})`, { stage: 'api', code: res.status });
     return body;
+  }
+  /**
+   * A rate-limit answer is retried quietly a few times before the user ever sees it (the free
+   * quota is a sliding window, so a short wait usually clears it). Reads are safe to repeat.
+   */
+  async function call(path, init) {
+    for (let attempt = 0; ; attempt++) {
+      try { return await once(path, init); } catch (e) {
+        if (e.stage !== 'rate' || attempt >= 3) throw e;
+        await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt)); // 2s, 4s, 8s
+      }
+    }
   }
 
   /** SOL and token balances for an address: { sol, lamports, tokens: Map(mint -> { raw: bigint, ui, decimals }) } */

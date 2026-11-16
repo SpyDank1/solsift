@@ -480,10 +480,18 @@ async function doTrade({ side, mint, sol, pct }) {
 async function lookupMeta(mints) {
   const need = mints.filter((m) => !findToken(m)).slice(0, 100);
   if (!need.length) return;
+  const keep = (list) => { for (const j of Array.isArray(list) ? list : []) if (isMint(j?.id)) state.meta.set(j.id, { mint: j.id, symbol: String(j.symbol || '?').slice(0, 16), name: String(j.name || '').slice(0, 48), icon: j.icon, price: Number(j.usdPrice) || null }); };
   try {
-    const r = await fetch(`${API}/tokens/v2/search?query=${need.join(',')}`, { cache: 'no-store' });
-    if (!r.ok) return;
-    for (const j of await r.json()) if (isMint(j?.id)) state.meta.set(j.id, { mint: j.id, symbol: String(j.symbol || '?').slice(0, 16), name: String(j.name || '').slice(0, 48), icon: j.icon, price: Number(j.usdPrice) || null });
+    // Names and prices come from the unmetered feed first, so the trading quota is left alone.
+    for (let i = 0; i < need.length; i += 50) {
+      const r = await fetch(`${DAT}/v1/assets/search?query=${need.slice(i, i + 50).join(',')}`);
+      if (r.ok) keep(await r.json());
+    }
+    const missing = need.filter((m) => !state.meta.has(m));
+    if (missing.length && state.local?.keyed) {
+      const r = await fetch(`${API}/tokens/v2/search?query=${missing.join(',')}`, { cache: 'no-store' });
+      if (r.ok) keep(await r.json());
+    }
   } catch { /* names are a nicety */ }
 }
 async function renderHoldings() {
@@ -627,12 +635,13 @@ async function load() {
 // ---------- live feed (every 5 seconds) ----------
 const DAT = 'https://datapi.jup.ag';
 let jupCooldown = 0; // rest Jupiter's rate-limited API until this time after a 429
+const seeded = { gems: false, recent: false };
 async function pollGems() {
   // New, about-to-graduate and just-graduated launchpad pools, with snipers, insiders and curve progress.
   const r = await fetch(`${DAT}/v1/pools/gems`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ recent: {}, graduated: {}, aboutToGraduate: {} }) });
   if (!r.ok) return false;
   const j = await r.json();
-  const quiet = state.liveStat.polls === 1;
+  const quiet = !seeded.gems; seeded.gems = true; // the first batch is the backlog, not new launches
   for (const b of ['recent', 'aboutToGraduate', 'graduated']) for (const p of j?.[b]?.pools || []) if (isMint(p?.baseAsset?.id)) live.upsert(p.baseAsset.id, 'dat', p.baseAsset, quiet);
   return true;
 }
@@ -640,7 +649,7 @@ async function pollRecent() {
   const r = await fetch(`${API}/tokens/v2/recent`, { cache: 'no-store' });
   if (r.status === 429) { jupCooldown = Date.now() + 30000; return false; }
   if (!r.ok) return false;
-  const quiet = state.liveStat.polls === 1;
+  const quiet = !seeded.recent; seeded.recent = true;
   for (const j of await r.json()) if (isMint(j?.id)) live.upsert(j.id, 'jup', j, quiet);
   return true;
 }
@@ -652,7 +661,8 @@ async function refreshKeepers() {
     const r = await fetch(`${DAT}/v1/assets/search?query=${mints.join(',')}`);
     if (r.ok) { for (const j of await r.json()) if (isMint(j?.id)) live.upsert(j.id, 'dat', j, true); return; }
   } catch { /* fall through to the documented API */ }
-  if (Date.now() < jupCooldown) return;
+  // Only with an API key: the free quota is reserved for trading.
+  if (!state.local?.keyed || Date.now() < jupCooldown) return;
   const r = await fetch(`${API}/tokens/v2/search?query=${mints.join(',')}`, { cache: 'no-store' });
   if (r.status === 429) jupCooldown = Date.now() + 30000;
   if (r.ok) for (const j of await r.json()) if (isMint(j?.id)) live.upsert(j.id, 'jup', j, true);
@@ -671,13 +681,18 @@ async function pollLive() {
     const s = state.liveStat;
     s.polls++;
     const keyed = !!state.local?.keyed;
-    // Two independent sources so one hiccup never stalls the feed. The documented API has a small
-    // keyless quota that trading also needs, so without a key it is only polled every 20 seconds.
+    // The launchpad feed drives the live list. Jupiter's documented API has a small free quota
+    // (about 30 requests a minute per connection) that buying, selling and balance checks need, so
+    // without an API key the feed leaves it alone, and only falls back to it (at most every 30s)
+    // if the launchpad feed itself is down.
     let ok = await pollGems().catch(() => false);
-    if (Date.now() >= jupCooldown && (keyed || s.polls % 4 === 1 || !ok)) ok = (await pollRecent().catch(() => false)) || ok;
+    if (Date.now() >= jupCooldown && (keyed || !ok)) {
+      if (!keyed) jupCooldown = Date.now() + 30000;
+      ok = (await pollRecent().catch(() => false)) || ok;
+    }
     if (s.polls % 2 === 0) await refreshKeepers().catch(() => {});
     if (ok) { s.last = Date.now(); s.err = null; }
-    else s.err = Date.now() < jupCooldown ? 'Rate limited by Jupiter, retrying shortly' : 'Live feed unreachable, retrying';
+    else s.err = 'Live feed unreachable, retrying';
     live.prune();
     if (s.polls % 6 === 0) live.save();
     renderLiveStatus();
@@ -767,7 +782,9 @@ async function detectLocal() {
     state.local = await r.json();
     if (state.local.keyed) { API = `${location.origin}/jup`; trader = createTrader(API); }
     $('localBadge').hidden = false;
-    $('localBadge').textContent = state.local.keyed ? 'Local · API key active' : 'Local · no API key';
+    $('localBadge').textContent = state.local.keyed ? 'Local · API key active' : 'Local · NO API KEY (see Settings)';
+    $('localBadge').classList.toggle('warn', !state.local.keyed);
+    $('localBadge').classList.toggle('dim', !!state.local.keyed);
   } catch { /* public site */ }
 }
 (async () => {

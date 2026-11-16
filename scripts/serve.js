@@ -127,7 +127,11 @@ function openBrowser() {
 }
 server.listen(port, '127.0.0.1', () => {
   console.log(`SolSift is running at http://localhost:${port}   (close this window to stop it)`);
-  console.log(KEY ? 'Jupiter API key: loaded from .env (kept on this PC)' : 'Jupiter API key: none. Add JUPITER_API_KEY=... to the .env file for higher limits.');
+  if (KEY) console.log('Jupiter API key: loaded from .env (kept on this PC)');
+  else {
+    console.log('Jupiter API key: NOT FOUND. Jupiter will rate limit buying, selling and balances.');
+    console.log('  Fix: create a file named .env in this folder containing  JUPITER_API_KEY=your_key  then restart.');
+  }
   if (!flag('--no-scan')) {
     console.log('Scanner: a full scan runs now and then every 5 minutes.');
     runScan();
