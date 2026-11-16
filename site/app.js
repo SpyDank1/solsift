@@ -385,15 +385,17 @@ import { scoreToken, finalise } from './lib/score.js';
   async function pollGems() {
     // New, about-to-graduate and just-graduated launchpad pools (richer data: snipers, insiders, curve progress).
     const r = await fetch('https://datapi.jup.ag/v1/pools/gems', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ recent: {}, graduated: {}, aboutToGraduate: {} }) });
-    if (!r.ok) return;
+    if (!r.ok) return false;
     const j = await r.json();
-    for (const b of ['recent', 'aboutToGraduate', 'graduated']) for (const p of j?.[b]?.pools || []) upsertLive(p?.baseAsset?.id, { dat: p.baseAsset }, state.liveStat.polls <= 2);
+    for (const b of ['recent', 'aboutToGraduate', 'graduated']) for (const p of j?.[b]?.pools || []) upsertLive(p?.baseAsset?.id, { dat: p.baseAsset }, state.liveStat.polls === 1);
+    return true;
   }
   async function refreshLive(skip) {
     // Keep numbers moving for tokens that have scrolled out of the "recent" window.
     const mints = [...state.live.entries()].filter(([m]) => !skip.has(m)).sort((a, b) => b[1].first - a[1].first).slice(0, 100).map(([m]) => m);
     if (!mints.length) return;
     const r = await fetch(`${JUP}/search?query=${mints.join(',')}`, { cache: 'no-store' });
+    if (r.status === 429) jupCooldown = Date.now() + 30000;
     if (!r.ok) return;
     for (const j of await r.json()) upsertLive(j?.id, { jup: j }, true);
   }
@@ -410,31 +412,37 @@ import { scoreToken, finalise } from './lib/score.js';
     el.textContent = s.err ? s.err : s.last ? `updated ${Math.max(0, Math.round((Date.now() - s.last) / 1000))}s ago · ${s.added} new since you opened the page` : 'connecting...';
   }
   let liveTimer = null;
+  let jupCooldown = 0; // skip Jupiter's rate-limited API until this time after a 429
   async function pollLive() {
     clearTimeout(liveTimer);
-    let delay = 5000;
     if (!document.hidden) {
       const s = state.liveStat;
       s.polls++;
-      try {
-        const r = await fetch(`${JUP}/recent`, { cache: 'no-store' });
-        if (r.status === 429) { delay = 15000; s.err = 'Jupiter rate limit reached, retrying in 15s'; }
-        else if (!r.ok) s.err = `live feed error ${r.status}`;
-        else {
-          const arr = await r.json();
-          const fresh = new Set();
-          for (const j of Array.isArray(arr) ? arr : []) { upsertLive(j?.id, { jup: j }, s.polls === 1); fresh.add(j?.id); }
-          s.last = Date.now();
-          s.err = null;
-          if (s.polls % 2 === 1) await pollGems().catch(() => {});
-          if (s.polls % 3 === 0) await refreshLive(fresh).catch(() => {});
-        }
-      } catch { s.err = 'live feed unreachable, retrying'; }
+      // Two independent sources so one hiccup never stalls the feed:
+      //  - the launchpad "gems" feed, every tick (no rate limit observed);
+      //  - Jupiter's documented token API, every other tick. Its keyless quota is small and is shared
+      //    with the swap widget on this page, so it is used sparingly and rested for 30s after a 429.
+      let ok = await pollGems().catch(() => false);
+      if (Date.now() >= jupCooldown && (s.polls % 2 === 1 || !ok)) {
+        try {
+          const r = await fetch(`${JUP}/recent`, { cache: 'no-store' });
+          if (r.status === 429) jupCooldown = Date.now() + 30000;
+          else if (r.ok) {
+            const arr = await r.json();
+            const fresh = new Set();
+            for (const j of Array.isArray(arr) ? arr : []) { upsertLive(j?.id, { jup: j }, s.polls === 1); fresh.add(j?.id); }
+            ok = true;
+            if (s.polls % 6 === 3) await refreshLive(fresh).catch(() => {});
+          }
+        } catch { /* fall through to the status below */ }
+      }
+      if (ok) { s.last = Date.now(); s.err = null; }
+      else s.err = Date.now() < jupCooldown ? 'Rate limited by Jupiter, retrying shortly' : 'Live feed unreachable, retrying';
       pruneLive();
       renderLiveStatus();
       if (state.mode === 'live') renderRows();
     }
-    liveTimer = setTimeout(pollLive, delay);
+    liveTimer = setTimeout(pollLive, 5000);
   }
   function setMode(mode) {
     state.mode = mode;
