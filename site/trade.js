@@ -184,11 +184,20 @@ export function createTrader(apiBase) {
     if (!signed || !signed.length) throw new TradeError('The wallet returned no signature.', { stage: 'sign' });
 
     onStage('send');
-    const result = await call('/swap/v2/execute', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ signedTransaction: bytesToB64(signed), requestId: order.requestId }),
-    });
+    // Submitting the same signed transaction and requestId again is safe (Jupiter treats it as the
+    // same order), so a rate limit or dropped connection here is retried instead of abandoning a
+    // transaction the user has already approved.
+    const payload = JSON.stringify({ signedTransaction: bytesToB64(signed), requestId: order.requestId });
+    let result;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        result = await call('/swap/v2/execute', { method: 'POST', headers: { 'content-type': 'application/json' }, body: payload });
+        break;
+      } catch (e) {
+        if (attempt >= 3 || !(e.stage === 'rate' || e.stage === 'network')) throw e;
+        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+      }
+    }
     if (!result || result.status !== 'Success') {
       throw new TradeError((result && result.error) || 'The swap did not go through.', { stage: 'execute', code: result && result.code });
     }

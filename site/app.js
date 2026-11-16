@@ -435,6 +435,8 @@ async function doTrade({ side, mint, sol, pct }) {
     if (sol > 5 && !confirm(`Buy ${sym} with ${sol} SOL? That is a large amount for a new token.`)) return;
   }
   busy = true;
+  // Without an API key the feed and the trade share one small Jupiter quota: give the trade all of it.
+  if (!state.local?.keyed) jupCooldown = Date.now() + 20000;
   document.body.classList.add('trading');
   try {
     let amount;
