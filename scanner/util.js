@@ -1,6 +1,7 @@
 // Shared helpers: polite HTTP with timeouts, retries and per-host pacing.
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { num } from './math.js';
 
 const UA = 'solana-token-scanner/1.0 (+github-actions)';
 const lastCall = new Map(); // host -> timestamp of last request
@@ -8,12 +9,7 @@ const stats = new Map(); // host -> { ok, fail }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const now = () => Date.now();
-export const clamp = (x, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, x));
-export const num = (x, d = null) => {
-  const n = typeof x === 'string' ? parseFloat(x) : x;
-  return Number.isFinite(n) ? n : d;
-};
-export const log10p = (x) => Math.log10(Math.max(0, num(x, 0)) + 1);
+export { clamp, num, log10p } from './math.js';
 
 export function chunk(arr, size) {
   const out = [];

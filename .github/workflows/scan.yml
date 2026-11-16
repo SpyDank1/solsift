@@ -2,8 +2,9 @@ name: Scan and deploy
 
 on:
   schedule:
-    # Every 15 minutes, offset from the top of the hour (GitHub delays or drops on-the-hour schedules under load).
-    - cron: "7,22,37,52 * * * *"
+    # Every 5 minutes (GitHub's minimum), offset from the top of the hour. GitHub delays or drops
+    # scheduled runs under load, so the real cadence is often slower. The site's live feed covers the gaps.
+    - cron: "2-59/5 * * * *"
   workflow_dispatch:
   push:
     branches: [main]
@@ -68,8 +69,10 @@ jobs:
 
       - name: Assemble site
         run: |
-          mkdir -p _site/data
+          mkdir -p _site/data _site/lib
           cp -r site/. _site/
+          # The live feed scores tokens in the browser with the scanner's own rules.
+          cp scanner/math.js scanner/normalize.js scanner/score.js _site/lib/
           cp data/tokens.json data/trends.json data/model.json data/paper.json _site/data/
 
       - uses: actions/configure-pages@v6

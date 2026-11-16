@@ -6,7 +6,7 @@
 // bucket anticipates still surface. A narrative is "hot" when many separate
 // launches share it AND real volume is flowing into them AND it is growing
 // versus the rolling history kept from previous runs.
-import { clamp } from './util.js';
+import { clamp } from './math.js';
 
 const BUCKETS = {
   ai: ['ai', 'agent', 'agents', 'gpt', 'llm', 'neural', 'bot', 'agi', 'claude', 'grok', 'openai', 'deepseek', 'robot', 'compute', 'terminal'],

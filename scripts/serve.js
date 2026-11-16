@@ -11,8 +11,10 @@ const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 createServer(async (req, res) => {
   let path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   if (path.endsWith('/')) path += 'index.html';
+  // The live feed scores tokens in the browser with the scanner's own rules: /lib/* is scanner/*.
+  const lib = path.match(/^\/lib\/(math|normalize|score)\.js$/);
   const base = path.startsWith('/data/') ? root : join(root, 'site');
-  const file = normalize(join(base, path));
+  const file = lib ? join(root, 'scanner', `${lib[1]}.js`) : normalize(join(base, path));
   if (!file.startsWith(root + sep)) { res.writeHead(403).end(); return; }
   try {
     const body = await readFile(file);

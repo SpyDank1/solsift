@@ -32,6 +32,13 @@
   </nav>
 
   <section class="view on" id="view-tokens">
+    <div class="feedbar">
+      <div class="seg" role="tablist" aria-label="Feed">
+        <button class="on" data-mode="scored" title="Tokens with real traction, fully checked: on-chain risk report, socials, sell route">Scored feed</button>
+        <button data-mode="live" title="Every new launch as it appears, with a first-impression score"><span class="dot"></span>Live launches</button>
+      </div>
+      <span class="liveinfo" id="liveInfo">connecting...</span>
+    </div>
     <div class="controls">
       <input type="search" id="q" placeholder="Search name, ticker, mint or #tag" autocomplete="off">
       <select id="sort" aria-label="Sort">
@@ -40,6 +47,12 @@
         <option value="vol">Volume 1h</option>
         <option value="liq">Liquidity</option>
         <option value="chg">1h change</option>
+      </select>
+      <select id="plat" aria-label="Platform"><option value="">All platforms</option></select>
+      <select id="stage" aria-label="Stage">
+        <option value="">Any stage</option>
+        <option value="curve">On bonding curve</option>
+        <option value="grad">Graduated / DEX pool</option>
       </select>
       <select id="age" aria-label="Age">
         <option value="0">Any age</option>
@@ -91,7 +104,14 @@
   <section class="view how" id="view-how">
     <div class="panel">
       <h3>What this is</h3>
-      <p>A scanner runs every 15 minutes on GitHub Actions. It discovers newly launched Solana tokens, pulls market, on-chain safety and social data for each one, scores them 0-100 and publishes the result here. It remembers every score and checks back later to learn which signals actually mattered.</p>
+      <p>A scanner runs every 5 minutes on GitHub Actions (GitHub's minimum, and it is often slower in practice). It discovers newly launched Solana tokens, pulls market, on-chain safety and social data for each one, scores them 0-100 and publishes the result here. It remembers every score and checks back later to learn which signals actually mattered.</p>
+      <h3>Two feeds</h3>
+      <ul>
+        <li><b>Scored feed</b>: tokens that already have real trading, with every check run (on-chain risk report, LP lock, socials, sell route, trend fit). Refreshed by each full scan.</li>
+        <li><b>Live launches</b>: your browser asks Jupiter for new tokens every 5 seconds and scores them on the spot with the same rules. Those checks that need the scanner have not run yet, so a live score is a first impression. Tokens seconds old are almost always capped as high risk, because that is what they are.</li>
+      </ul>
+      <h3>What the score is for</h3>
+      <p>It is a 0-100 ranking of how much a token looks like something that survives versus something built to take your money. It sorts and filters the list, hides likely rugs by default, makes the Buy button ask for confirmation on flagged tokens, and decides what the paper bot "buys". It never buys anything on its own, and it is not a price prediction.</p>
       <h3>How the score is built</h3>
       <ul>
         <li><b>Hard gates</b> cap the score no matter what else looks good: live freeze or mint authority, dangerous Token-2022 extensions, liquidity that can be pulled, dust liquidity, one wallet owning the supply, a creator with past rugs, or no sell route.</li>
@@ -106,7 +126,7 @@
       <h3>Honest limits</h3>
       <ul>
         <li>Published studies put pump.fun graduation at roughly 0.5-2% and find about three quarters of DEX-listed tokens rug within 24 hours. A good filter still leaves most picks losing.</li>
-        <li>Data is up to 15 minutes old and comes from free third-party APIs that can be wrong, late or missing.</li>
+        <li>Scored-feed data is minutes old, and all of it comes from free third-party APIs that can be wrong, late or missing.</li>
         <li>A sell route existing does not prove a sell will succeed. Check before you size up.</li>
         <li>The paper bot's fills are idealised. Real slippage on thin pools is worse.</li>
       </ul>
@@ -120,6 +140,6 @@
 <div class="overlay" id="overlay"></div>
 <aside class="drawer" id="drawer" aria-hidden="true"></aside>
 <div class="toast" id="toast"></div>
-<script src="app.js" defer></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

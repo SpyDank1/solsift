@@ -2,11 +2,16 @@
    Everything rendered here originates from token creators (names, tickers,
    links, images), so every string goes through esc() and every URL through
    safeUrl() before it touches the DOM. */
+import { buildToken } from './lib/normalize.js';
+import { scoreToken, finalise } from './lib/score.js';
+
 (() => {
-  'use strict';
   const SOL = 'So11111111111111111111111111111111111111112';
   const $ = (id) => document.getElementById(id);
-  const state = { data: null, trends: null, model: null, paper: null, sort: 'score', open: null };
+  const state = { data: null, trends: null, model: null, paper: null, sort: 'score', open: null, mode: 'scored', live: new Map(), liveStat: { last: 0, added: 0, err: null, polls: 0 } };
+  const liveList = () => [...state.live.values()].map((e) => e.t);
+  const currentAll = () => (state.mode === 'live' ? liveList() : state.data?.tokens || []);
+  const findToken = (mint) => currentAll().find((x) => x.mint === mint) || (state.data?.tokens || []).find((x) => x.mint === mint) || state.live.get(mint)?.t;
 
   // ---------- helpers ----------
   const esc = (s) => String(s ?? '').replace(/[&<>"'`]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;' }[c]));
@@ -37,6 +42,7 @@
   const ago = (ms) => {
     if (!ms) return '?';
     const m = Math.max(0, (Date.now() - ms) / 60000);
+    if (m < 1.5) return Math.round(m * 60) + 's';
     if (m < 60) return Math.round(m) + 'm';
     if (m < 1440) return (m / 60).toFixed(m < 600 ? 1 : 0) + 'h';
     return (m / 1440).toFixed(1) + 'd';
@@ -86,9 +92,44 @@
     return `<div class="chips">${out.join('')}</div>`;
   }
 
+  // ---------- platforms ----------
+  function platformOf(t) {
+    const s = `${t.launchpad || ''} ${t.dex || ''}`.toLowerCase();
+    if (s.includes('pump')) return 'pump.fun';
+    if (s.includes('bonk')) return 'LetsBonk';
+    if (s.includes('raydium') || s.includes('launchlab')) return 'Raydium';
+    if (s.includes('met-dbc') || s.includes('meteora')) return 'Meteora';
+    if (s.includes('moonshot')) return 'Moonshot';
+    if (s.includes('orca')) return 'Orca';
+    return String(t.launchpad || t.dex || 'Other').slice(0, 24);
+  }
+  const isPromo = (t) => t.promo ?? t.boosts > 0;
+  let platSig = '';
+  function syncPlatforms(all) {
+    const sel = $('plat');
+    if (document.activeElement === sel) return; // don't rebuild the menu while it is open
+    const counts = new Map();
+    let promo = 0;
+    for (const t of all) {
+      const p = platformOf(t);
+      counts.set(p, (counts.get(p) || 0) + 1);
+      if (isPromo(t)) promo++;
+    }
+    const entries = [...counts].sort((a, b) => b[1] - a[1]);
+    const sig = entries.map((e) => e.join(':')).join(',') + '|' + promo;
+    if (sig === platSig) return;
+    platSig = sig;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">All platforms</option>' + entries.map(([p, n]) => `<option value="${esc(p)}">${esc(p)} (${n})</option>`).join('') + (promo ? `<option value="__promo">Promoted on DEX Screener (${promo})</option>` : '');
+    sel.value = [...sel.options].some((o) => o.value === cur) ? cur : '';
+  }
+
   // ---------- token list ----------
   function filtered() {
-    const all = state.data?.tokens || [];
+    const all = currentAll();
+    syncPlatforms(all);
+    const plat = $('plat').value;
+    const stage = $('stage').value;
     const q = $('q').value.trim().toLowerCase();
     const min = +$('min').value;
     const maxAge = +$('age').value;
@@ -97,6 +138,9 @@
     const list = all.filter((t) => {
       if (hide && gated(t)) { hidden++; return false; }
       if (t.score.total < min) return false;
+      if (plat === '__promo' ? !isPromo(t) : plat && platformOf(t) !== plat) return false;
+      if (stage === 'curve' && !t.onCurve) return false;
+      if (stage === 'grad' && t.onCurve) return false;
       if (maxAge && (Date.now() - t.createdAt) / 60000 > maxAge) return false;
       if (q) {
         const hay = `${t.name} ${t.symbol} ${t.mint} ${(t.tags || []).join(' ')}`.toLowerCase();
@@ -105,19 +149,22 @@
       return true;
     });
     const key = { score: (t) => t.score.total, new: (t) => t.createdAt, vol: (t) => t.vol?.h1 || 0, liq: (t) => t.liq || 0, chg: (t) => t.chg?.h1 ?? -1e9, mcap: (t) => t.mcap || 0 }[state.sort];
-    list.sort((a, b) => key(b) - key(a));
+    // Ties (common among capped scores) fall back to the uncapped rule score, then to recency.
+    list.sort((a, b) => key(b) - key(a) || (b.score.rule || 0) - (a.score.rule || 0) || (b.createdAt || 0) - (a.createdAt || 0));
     return { list, hidden, total: all.length };
   }
 
   function renderRows() {
     const { list, hidden, total } = filtered();
-    $('count').textContent = `${list.length} of ${total} shown${hidden ? ` · ${hidden} hidden as likely rugs` : ''}`;
+    $('count').textContent = `${list.length} of ${total} ${state.mode === 'live' ? 'live launches' : 'shown'}${hidden ? ` · ${hidden} hidden as likely rugs` : ''}`;
+    $('empty').textContent = state.mode === 'live' && !total ? 'Waiting for the live feed...' : 'No tokens match these filters.';
+    const freshCut = Date.now() - 6500;
     $('empty').hidden = list.length > 0;
     document.querySelectorAll('th[data-sort]').forEach((th) => th.classList.toggle('sorted', th.dataset.sort === state.sort));
     $('rows').innerHTML = list.slice(0, 250).map((t) => `
-      <tr data-mint="${esc(t.mint)}" class="${gated(t) ? 'flagged' : ''}">
+      <tr data-mint="${esc(t.mint)}" class="${gated(t) ? 'flagged' : ''}${t.live && t.seen > freshCut ? ' fresh' : ''}">
         <td><div class="tok">${icon(t)}<div><div class="nm">${esc(t.name || t.symbol)}</div>
-          <div class="sub"><b>$${esc(t.symbol)}</b><span>${ago(t.createdAt)} old</span><span>${esc(t.dex || '')}</span></div></div></div></td>
+          <div class="sub"><b>$${esc(t.symbol)}</b><span>${ago(t.createdAt)} old</span><span>${esc(platformOf(t))}</span>${t.onCurve ? `<span class="chip dim">curve${t.curvePct != null ? ' ' + Math.round(t.curvePct) + '%' : ''}</span>` : ''}${t.live ? '<span class="chip live">LIVE</span>' : ''}</div></div></div></td>
         <td>${ring(t)}</td>
         <td class="l"><span class="chip ${verdictClass(t.score.verdict)}">${esc(t.score.verdict)}</span></td>
         <td>${fmtPrice(t.price)}</td>
@@ -148,12 +195,12 @@
     $('tiles').innerHTML = tiles.map(([k, v, s]) => `<div class="tile"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
     const ageMin = (Date.now() - d.generatedAt) / 60000;
     $('dot').classList.toggle('stale', ageMin > 45);
-    $('scanStatus').textContent = `Last scan ${ago(d.generatedAt)} ago${ageMin > 45 ? ' (scheduled runs can be delayed by GitHub)' : ''}`;
+    $('scanStatus').textContent = `Last full scan ${ago(d.generatedAt)} ago${ageMin > 45 ? ' (scheduled runs can be delayed by GitHub)' : ''}`;
   }
 
   // ---------- drawer ----------
   function openDrawer(mint) {
-    const t = (state.data?.tokens || []).find((x) => x.mint === mint);
+    const t = findToken(mint);
     if (!t) return;
     state.open = mint;
     const s = t.safety || {};
@@ -181,6 +228,7 @@
           <div class="muted" style="margin-top:6px;font-size:12.5px">Rules: ${t.score.rule}${t.score.ml != null ? ` · Model: ${Math.round(t.score.ml * 100)}% chance of holding up` : ' · Model: not enough data yet'}</div>
           <div class="chips" style="margin-top:6px">${(t.tags || []).map((g) => `<span class="chip dim">${esc(g)}</span>`).join('')}</div></div></div>
       ${t.desc ? `<p class="muted" style="font-size:13px">${esc(t.desc)}</p>` : ''}
+      ${t.live ? '<div class="disclaimer" style="margin-top:12px"><b>Live estimate.</b> Scored in your browser from Jupiter data that is seconds old. The on-chain risk report, LP lock, sell-route probe and social-account age are only checked in the next full scan, so treat this number as a first impression.</div>' : ''}
       <div class="sec"><h3>Score breakdown</h3><div class="bars">${bars}</div></div>
       <div class="sec"><h3>Why</h3><ul class="reasons">${reasons || '<li class="muted">No notable signals.</li>'}</ul></div>
       <div class="sec"><h3>Market</h3><div class="kv">
@@ -220,7 +268,7 @@
   // ---------- buy ----------
   function buy(mint) {
     if (!isMint(mint)) return;
-    const t = (state.data?.tokens || []).find((x) => x.mint === mint);
+    const t = findToken(mint);
     if (t && gated(t)) {
       const why = t.score.gates.slice(0, 3).map((g) => '• ' + g).join('\n');
       if (!confirm(`SolSift flagged $${t.symbol} as ${t.score.verdict.toLowerCase()}:\n\n${why}\n\nYou could lose everything you put in. Open the swap anyway?`)) return;
@@ -314,6 +362,91 @@
     if (d.repo && /^[\w.-]+\/[\w.-]+$/.test(d.repo)) $('repoLink').innerHTML = `<a href="https://github.com/${esc(d.repo)}" target="_blank" rel="noopener">Source on GitHub</a>`;
   }
 
+  // ---------- live feed (every 5 seconds, straight from Jupiter) ----------
+  const JUP = 'https://api.jup.ag/tokens/v2';
+  const LIVE_MAX = 200;
+  function upsertLive(mint, part, quiet) {
+    if (!isMint(mint)) return;
+    const now = Date.now();
+    const known = state.live.get(mint);
+    const e = known || { raw: {}, first: quiet ? now - 60000 : now };
+    Object.assign(e.raw, part);
+    e.upd = now;
+    let t;
+    try {
+      t = buildToken(mint, { jup: e.raw.jup, dat: e.raw.dat, meta: {} }, now);
+      if (t.ageMin == null) return;
+      t.score = finalise(scoreToken(t, null), null, 0); // same rules as the scanner, minus the checks it has not run yet
+    } catch { return; }
+    Object.assign(t, { live: true, seen: e.first, tags: [] });
+    e.t = t;
+    if (!known) { state.live.set(mint, e); if (!quiet) state.liveStat.added++; }
+  }
+  async function pollGems() {
+    // New, about-to-graduate and just-graduated launchpad pools (richer data: snipers, insiders, curve progress).
+    const r = await fetch('https://datapi.jup.ag/v1/pools/gems', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ recent: {}, graduated: {}, aboutToGraduate: {} }) });
+    if (!r.ok) return;
+    const j = await r.json();
+    for (const b of ['recent', 'aboutToGraduate', 'graduated']) for (const p of j?.[b]?.pools || []) upsertLive(p?.baseAsset?.id, { dat: p.baseAsset }, state.liveStat.polls <= 2);
+  }
+  async function refreshLive(skip) {
+    // Keep numbers moving for tokens that have scrolled out of the "recent" window.
+    const mints = [...state.live.entries()].filter(([m]) => !skip.has(m)).sort((a, b) => b[1].first - a[1].first).slice(0, 100).map(([m]) => m);
+    if (!mints.length) return;
+    const r = await fetch(`${JUP}/search?query=${mints.join(',')}`, { cache: 'no-store' });
+    if (!r.ok) return;
+    for (const j of await r.json()) upsertLive(j?.id, { jup: j }, true);
+  }
+  function pruneLive() {
+    const now = Date.now();
+    for (const [m, e] of state.live) if (now - e.upd > 15 * 60000) state.live.delete(m);
+    if (state.live.size > LIVE_MAX) for (const [m] of [...state.live.entries()].sort((a, b) => a[1].first - b[1].first).slice(0, state.live.size - LIVE_MAX)) state.live.delete(m);
+  }
+  function renderLiveStatus() {
+    const s = state.liveStat;
+    const el = $('liveInfo');
+    if (!el) return;
+    el.classList.toggle('err', !!s.err);
+    el.textContent = s.err ? s.err : s.last ? `updated ${Math.max(0, Math.round((Date.now() - s.last) / 1000))}s ago · ${s.added} new since you opened the page` : 'connecting...';
+  }
+  let liveTimer = null;
+  async function pollLive() {
+    clearTimeout(liveTimer);
+    let delay = 5000;
+    if (!document.hidden) {
+      const s = state.liveStat;
+      s.polls++;
+      try {
+        const r = await fetch(`${JUP}/recent`, { cache: 'no-store' });
+        if (r.status === 429) { delay = 15000; s.err = 'Jupiter rate limit reached, retrying in 15s'; }
+        else if (!r.ok) s.err = `live feed error ${r.status}`;
+        else {
+          const arr = await r.json();
+          const fresh = new Set();
+          for (const j of Array.isArray(arr) ? arr : []) { upsertLive(j?.id, { jup: j }, s.polls === 1); fresh.add(j?.id); }
+          s.last = Date.now();
+          s.err = null;
+          if (s.polls % 2 === 1) await pollGems().catch(() => {});
+          if (s.polls % 3 === 0) await refreshLive(fresh).catch(() => {});
+        }
+      } catch { s.err = 'live feed unreachable, retrying'; }
+      pruneLive();
+      renderLiveStatus();
+      if (state.mode === 'live') renderRows();
+    }
+    liveTimer = setTimeout(pollLive, delay);
+  }
+  function setMode(mode) {
+    state.mode = mode;
+    document.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
+    // Brand-new launches are all thin and unproven, so the live view shows everything, newest first.
+    state.sort = mode === 'live' ? 'new' : 'score';
+    $('sort').value = state.sort;
+    $('hide').checked = mode !== 'live';
+    platSig = '';
+    renderRows();
+  }
+
   // ---------- events ----------
   document.addEventListener('click', (e) => {
     const b = e.target.closest('[data-buy]');
@@ -321,6 +454,8 @@
     if (e.target.closest('[data-close]') || e.target.id === 'overlay') return closeDrawer();
     const c = e.target.closest('[data-copy]');
     if (c) { navigator.clipboard?.writeText(c.dataset.copy).then(() => toast('Mint address copied')); return; }
+    const seg = e.target.closest('.seg button');
+    if (seg) return setMode(seg.dataset.mode);
     const tab = e.target.closest('.tab');
     if (tab) {
       document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('on', x === tab));
@@ -335,11 +470,14 @@
     if (tr && !e.target.closest('a')) openDrawer(tr.dataset.mint);
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
-  ['q', 'age', 'hide'].forEach((id) => $(id).addEventListener('input', renderRows));
+  ['q', 'age', 'hide', 'plat', 'stage'].forEach((id) => $(id).addEventListener('input', renderRows));
   $('sort').addEventListener('change', (e) => { state.sort = e.target.value; renderRows(); });
   $('min').addEventListener('input', (e) => { $('minv').textContent = e.target.value; renderRows(); });
 
   load();
-  setInterval(load, 60000);
+  setInterval(load, 20000);
+  pollLive();
+  setInterval(renderLiveStatus, 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) pollLive(); });
   setInterval(() => { if (state.data) renderTiles(); }, 30000);
 })();

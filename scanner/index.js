@@ -211,6 +211,8 @@ if (feedsUp) paper = stepPaper(paper, tokens, lookup, t0);
 tokens.sort((a, b) => b.score.total - a.score.total);
 const pub = tokens.map(({ _tags, _x, decimals, src, traders, holderChg, ...t }) => {
   t.ageMin = Math.round(t.ageMin);
+  // Team paid DEX Screener for a profile, boost or takeover listing (a filter on the site, not a quality signal).
+  t.promo = t.boosts > 0 || (src || []).some((s) => s.startsWith('ds:'));
   for (const k of ['price', 'liq', 'mcap']) if (t[k] != null) t[k] = +(+t[k]).toPrecision(6);
   for (const k of Object.keys(t.vol)) t.vol[k] = Math.round(t.vol[k] || 0);
   for (const k of Object.keys(t.chg)) if (t.chg[k] != null) t.chg[k] = +(+t.chg[k]).toFixed(1);

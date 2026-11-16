@@ -2,9 +2,10 @@
 
 Scans newly launched Solana tokens, screens them for rug-pull mechanics, scores each one 0-100, and keeps a public record of how its own scores turned out.
 
-- **Scanner** (`scanner/`): a dependency-free Node.js script that runs every 15 minutes on GitHub Actions.
+- **Scanner** (`scanner/`): a dependency-free Node.js script that runs every 5 minutes on GitHub Actions (GitHub's minimum; real cadence is often slower).
 - **Website** (`site/`): a static page on GitHub Pages that lists the scored tokens and lets a visitor buy one with their own wallet through the Jupiter plugin.
 - **Learning loop**: every score is re-checked 1, 6 and 24 hours later; the outcomes train a small model that gradually takes a share of the score.
+- **Live launches**: the page itself polls Jupiter every 5 seconds and scores brand-new tokens in the browser with the scanner's own rules.
 - **Paper bot**: a simulated portfolio that "buys" the high scores, so the scoring has to prove itself before anyone trusts it with money.
 
 > **Not financial advice.** Published studies put pump.fun graduation rates at roughly 0.5-2%, and one found about 76% of DEX-listed Solana tokens rugged within 24 hours. A good filter still leaves most picks losing. The site never holds funds or keys: swaps are signed in the visitor's own wallet via Jupiter Ultra (Powered by Jupiter). Jupiter's terms exclude some jurisdictions, including the United States.
@@ -69,6 +70,17 @@ Simulated money only. It never signs or sends a transaction.
 - Exits at +100%, at -35%, when a rug flag appears, when liquidity drains, after 24 hours, or at -100% if the token vanishes.
 - Charges 1.5% per side for fees and slippage. Prices are sampled once per scan, so real fills would be worse.
 
+## Two feeds
+
+| Feed | Freshness | What has been checked |
+|---|---|---|
+| Scored feed | each full scan (minutes) | everything: on-chain risk report, LP lock, socials, sell route, trend fit, learned model |
+| Live launches | 5 seconds | only what Jupiter reports: authorities, holder and developer share, snipers and insiders, liquidity, trades, organic score |
+
+The live feed runs entirely in the visitor's browser (`site/app.js` imports `scanner/normalize.js` and `scanner/score.js`), so a live score is a first impression, not the full verdict. Tokens seconds old are nearly always capped as high risk: thin liquidity and no track record is exactly what high risk means. The live feed pauses while the tab is in the background and backs off if Jupiter rate-limits the visitor.
+
+Both feeds can be filtered by platform (pump.fun, Raydium, Meteora, LetsBonk and whatever else appears), by stage (on the bonding curve or graduated), by age, by minimum score, and, for the scored feed, by tokens promoted on DEX Screener.
+
 ## Buying
 
 The Buy button opens the [Jupiter plugin](https://plugin.jup.ag/) with SOL as input and the token fixed as output. The visitor connects Phantom, Solflare or Backpack and approves the transaction in the wallet. If the plugin fails to load, the button opens the same swap on jup.ag. Flagged tokens ask for confirmation first.
@@ -97,7 +109,7 @@ Optional: set a free `JUPITER_API_KEY` (from the Jupiter developer portal) as an
 
 ## Deployment
 
-`.github/workflows/scan.yml` runs on a 15-minute schedule, on manual dispatch and on pushes to `main`. Each run restores state from the orphan `data` branch, scans, force-pushes the new state back to `data`, then builds and deploys the site to GitHub Pages. Keeping state on a branch that is overwritten each run stops the repository growing without bound.
+`.github/workflows/scan.yml` runs on a 5-minute schedule, on manual dispatch and on pushes to `main`. Each run restores state from the orphan `data` branch, scans, force-pushes the new state back to `data`, then builds and deploys the site to GitHub Pages. Keeping state on a branch that is overwritten each run stops the repository growing without bound.
 
 Things to know:
 
@@ -113,7 +125,9 @@ Jupiter Tokens API and Swap API, DEX Screener, GeckoTerminal, RugCheck, Raydium 
 
 ```
 scanner/index.js    one scan run, start to finish
-scanner/sources.js  discovery and enrichment APIs, input sanitising
+scanner/sources.js  discovery and enrichment APIs
+scanner/normalize.js  raw API objects -> one sanitised token record (also runs in the browser)
+scanner/math.js     numeric helpers (also runs in the browser)
 scanner/social.js   X, Telegram and domain-age lookups
 scanner/score.js    hard gates, weighted components, feature vector
 scanner/trends.js   narrative and keyword detection

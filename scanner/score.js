@@ -11,7 +11,7 @@
 //      number toward what has actually worked.
 //
 // Unknown is never treated as good: a missing data point scores below neutral.
-import { clamp, log10p, num } from './util.js';
+import { clamp, log10p, num } from './math.js';
 
 export const WEIGHTS = { safety: 35, market: 20, momentum: 25, social: 10, trend: 10 };
 
