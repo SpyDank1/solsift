@@ -99,6 +99,18 @@ The swap path was tested end to end against a mock wallet with the send step stu
 
 **My filters** on the token list sets limits on the same measurements the score uses, and hides everything that breaks one: top-10 holder share, developer share, snipers, insiders and bundles, holder count, creator's launch count, liquidity, market cap range, hourly volume and trades, buy share, age, organic score, LP lock, X account age and followers, Telegram size, plus switches such as "mint authority revoked" and "no red flags". Filters are saved in the browser. Measurements that only exist after a full scan are marked and ignored in the live feed.
 
+## Your paper bot
+
+The **Paper bot** tab runs a simulated portfolio in the browser (`site/paperbot.js`) with rules you set, and shows them in plain language:
+
+- **Buy rules**: which feed it watches (scored, live or both), a minimum score, whether hard red flags are allowed, and any of the same limits and switches as My filters (top-10 share, developer share, snipers, liquidity, market cap, age, organic score and so on). Every rule must be true.
+- **Sell rules**: take profit and stop loss (judged after costs), trailing stop, time limit, a hard red flag appearing, the score falling below a level, liquidity dropping by a percentage. The first one that triggers closes the position. A position with no price for 15 minutes is counted as a total loss.
+- **Sizing**: paper money per buy, maximum open positions, the cost charged per side, starting balance.
+
+Each position records why it was bought and why it was sold, and the stats break results down by exit reason. The bot never buys at a stale price: it fetches a fresh one first. It runs while the page is open (and keeps managing open positions in a background tab), samples prices about every 10 seconds, and assumes no price impact, so real results on thin pools will be worse. It cannot sign or send anything; each open position has a Buy button if you want to make the same trade yourself through your wallet.
+
+The scanner keeps its own fixed-rule paper bot (`scanner/paper.js`) as a public scoreboard, shown on the Bot performance tab.
+
 ## Live history and storage
 
 The live feeds only ever return the newest ~30 tokens, so `site/livestore.js` remembers the ones worth a second look:
@@ -165,6 +177,7 @@ site/app.js         page logic: feeds, filters, drawer, settings
 site/trade.js       wallet connection (Wallet Standard) and Jupiter swaps
 site/userfilters.js your own filter limits
 site/livestore.js   capped live-launch history
+site/paperbot.js    your rule-driven paper bot
 scripts/serve.js    local launcher: site, scanner loop, private API-key proxy
 test/               unit tests
 ```

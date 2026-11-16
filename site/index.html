@@ -33,6 +33,7 @@
   <nav class="tabs" role="tablist">
     <button class="tab on" data-view="tokens">New tokens</button>
     <button class="tab" data-view="wallet">My tokens</button>
+    <button class="tab" data-view="bot">Paper bot</button>
     <button class="tab" data-view="trends">Trends</button>
     <button class="tab" data-view="perf">Bot performance</button>
     <button class="tab" data-view="how">How it works</button>
@@ -98,6 +99,26 @@
     <div class="panel"><h3>My tokens</h3><div id="holdings"><div class="empty">Connect a wallet to see and sell the tokens you hold.</div></div></div>
   </section>
 
+  <section class="view" id="view-bot">
+    <div class="panel">
+      <div class="bothead">
+        <div><h3>Your paper bot</h3><p class="sub">Simulated money only: it cannot sign or send anything. It watches the same tokens you see and "buys" and "sells" by the rules below, so you can tune them and see what they would have done. It runs in this browser while the page is open.</p></div>
+        <div class="opts"><button class="btn sm" id="botToggle">Pause</button><button class="btn sm" data-bot-reset-pf>Reset portfolio</button><button class="btn sm" data-bot-reset-rules>Default rules</button></div>
+      </div>
+      <div id="botStats"></div>
+      <svg class="spark" id="botEquity" viewBox="0 0 600 120" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="panel"><h3>When it buys</h3><p class="sub">A token is bought only when every line below is true. Change any number and the list updates.</p><ul class="reasons" id="botBuys"></ul><div id="botEntryForm"></div></div>
+      <div class="panel"><h3>When it sells</h3><p class="sub">The first rule that triggers closes the position. Empty a box to switch that rule off.</p><ul class="reasons" id="botSells"></ul><div id="botExitForm"></div></div>
+    </div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="panel"><h3>Open paper positions</h3><div id="botOpen"></div></div>
+      <div class="panel"><h3>Closed paper trades</h3><div id="botClosed"></div></div>
+    </div>
+    <div class="panel" style="margin-top:14px"><h3>The scanner's fixed-rule bot, and real money</h3><div id="botRef"></div></div>
+  </section>
+
   <section class="view" id="view-trends">
     <div class="grid2">
       <div class="panel"><h3>Narratives getting volume</h3><p class="sub">Themes shared by many new launches, ranked by breadth, money flowing in and growth versus earlier scans. Click one to filter the token list.</p><div id="narratives"></div></div>
@@ -109,7 +130,7 @@
     <div class="grid2">
       <div class="panel"><h3>Did the scores hold up?</h3><p class="sub">Every scored token is re-checked 24 hours later. "Held up" means the pool kept its liquidity and the price kept at least half its value.</p><div id="calib"></div></div>
       <div class="panel"><h3>What the model learned</h3><p class="sub" id="modelSub"></p><div id="importance"></div></div>
-      <div class="panel"><h3>Paper-trading bot</h3><p class="sub">Simulated money only. It "buys" high-scoring tokens and exits on rules, so you can see whether the scores are worth anything before risking real funds.</p><div id="paperStats"></div><svg class="spark" id="equity" viewBox="0 0 600 120" preserveAspectRatio="none"></svg></div>
+      <div class="panel"><h3>Scanner's paper bot (fixed rules)</h3><p class="sub">Simulated money only. Runs inside every scan with fixed rules, as a public scoreboard for the scores. For a bot whose rules you can change, see the Paper bot tab.</p><div id="paperStats"></div><svg class="spark" id="equity" viewBox="0 0 600 120" preserveAspectRatio="none"></svg></div>
       <div class="panel"><h3>Paper positions</h3><p class="sub">Open positions and the most recent exits.</p><div id="paperPos"></div></div>
     </div>
   </section>
@@ -132,6 +153,8 @@
         <li>Sell buttons sell a percentage of what you hold. The <b>My tokens</b> tab lists everything in your wallet, including tokens that have left the feeds.</li>
         <li>Slippage, priority fee, buy amounts and safety prompts are under <b>Settings</b>.</li>
       </ul>
+      <h3>Paper bot</h3>
+      <p>The <b>Paper bot</b> tab runs a simulated portfolio with buy and sell rules you set. It lists the rules in plain words, records why each position was bought and sold, and breaks results down by exit reason, so you can tune the factors before using real money. It cannot sign or send anything.</p>
       <h3>How the score is built</h3>
       <ul>
         <li><b>Hard gates</b> cap the score no matter what else looks good: live freeze or mint authority, dangerous Token-2022 extensions, liquidity that can be pulled, dust liquidity, one wallet owning the supply, a creator with past rugs, or no sell route.</li>

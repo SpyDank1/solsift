@@ -243,3 +243,13 @@ input[type=number]:focus { border-color: var(--accent); }
 .opts { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
 table.hold { min-width: 560px; }
 table.hold td { vertical-align: middle; }
+
+/* Paper bot */
+.bothead { display: flex; gap: 16px; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; }
+.bothead .sub { max-width: 78ch; }
+.botkv { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+.botwhy { font-size: 11.5px; white-space: normal; max-width: 340px; margin-top: 2px; }
+.flim select { background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 6px 8px; max-width: 190px; }
+#view-bot ul.reasons { margin-bottom: 4px; }
+#view-bot table.mini td { white-space: normal; }
+code { font-family: var(--mono); background: var(--panel-2); padding: 1px 5px; border-radius: 5px; font-size: 12.5px; }

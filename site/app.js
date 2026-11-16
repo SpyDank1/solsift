@@ -7,6 +7,7 @@
 import { SOL_MINT, createTrader, listWallets, onWalletChange, currentWallet, connectWallet, disconnectWallet, restoreWallet, solToLamports, pctOf } from './trade.js';
 import { LIMITS, SWITCHES, loadFilters, saveFilters, resetFilters, activeCount, passes } from './userfilters.js';
 import { createLiveStore, CAPS } from './livestore.js';
+import { loadBot, saveBot, resetRules, newPortfolio, stepBot, describeRules, botStats } from './paperbot.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -27,6 +28,8 @@ function loadSettings() {
 const saveSettings = () => { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* ignore */ } };
 let settings = loadSettings();
 let filters = loadFilters();
+const bot = loadBot(); // { rules, pf } for your paper bot
+const botQuotes = new Map(); // mint -> { price, liq, at } fresh prices fetched for the bot
 
 // ---------- state ----------
 const state = { data: null, trends: null, model: null, paper: null, sort: 'score', open: null, mode: 'scored', liveStat: { last: 0, err: null, polls: 0 }, hold: null, holdAt: 0, meta: new Map(), local: null };
@@ -556,6 +559,148 @@ function onSettingsInput(e) {
   renderRows();
 }
 
+// ---------- your paper bot ----------
+const botField = (label, path, unit, hint = '') => {
+  const v = path.split('.').reduce((o, k) => (o == null ? o : o[k]), bot.rules);
+  return `<label class="flim"><span>${esc(label)}${hint ? ` <i>${esc(hint)}</i>` : ''}</span><span class="fbox"><input type="number" min="0" step="any" inputmode="decimal" data-bot="${path}" value="${Number.isFinite(v) ? v : ''}" placeholder="off"><em>${esc(unit)}</em></span></label>`;
+};
+function renderBotForms() {
+  const r = bot.rules;
+  const groups = [...new Set(LIMITS.map((l) => l.group))];
+  $('botEntryForm').innerHTML = `
+    <div class="fgrid" style="margin-top:12px">
+      <div class="fcol"><h4>Basics</h4>
+        <label class="flim"><span>Tokens it looks at</span><select data-bot="feed"><option value="both"${r.feed === 'both' ? ' selected' : ''}>Scored feed + live launches</option><option value="scored"${r.feed === 'scored' ? ' selected' : ''}>Scored feed only</option><option value="live"${r.feed === 'live' ? ' selected' : ''}>Live launches only</option></select></label>
+        ${botField('Score at least', 'entry.minScore', '/100')}
+        <label class="fsw"><input type="checkbox" data-bot="entry.allowFlagged"${r.entry.allowFlagged ? ' checked' : ''}> Allow tokens with hard red flags</label>
+        <label class="fsw"><input type="checkbox" data-bot="entry.strict"${r.entry.strict ? ' checked' : ''}> Skip tokens where a checked value is unknown</label>
+      </div>
+      ${groups.map((g) => `<div class="fcol"><h4>${esc(g)}</h4>${LIMITS.filter((l) => l.group === g).map((l) => `<label class="flim"><span>${esc(l.label)}${l.scoredOnly ? ' <i title="Only measured in the full scan">scan only</i>' : ''}</span><span class="fbox"><input type="number" min="0" step="any" inputmode="decimal" data-blimit="${l.id}" value="${Number.isFinite(r.entry.limits[l.id]) ? r.entry.limits[l.id] : ''}" placeholder="off"><em>${esc(l.unit)}</em></span></label>`).join('')}</div>`).join('')}
+      <div class="fcol"><h4>Must be true</h4>${SWITCHES.map((s) => `<label class="fsw"><input type="checkbox" data-bswitch="${s.id}"${r.entry.switches[s.id] ? ' checked' : ''}> ${esc(s.label)}</label>`).join('')}</div>
+    </div>`;
+  $('botExitForm').innerHTML = `
+    <div class="fgrid" style="margin-top:12px">
+      <div class="fcol"><h4>Exits</h4>
+        ${botField('Take profit at', 'exit.takeProfit', '% up')}
+        ${botField('Stop loss at', 'exit.stopLoss', '% down')}
+        ${botField('Trailing stop', 'exit.trailing', '% off high')}
+        ${botField('Sell after', 'exit.maxHoldMin', 'min')}
+        ${botField('Sell if score falls below', 'exit.scoreBelow', '/100')}
+        ${botField('Sell if liquidity drops by', 'exit.liqDrop', '%')}
+        <label class="fsw"><input type="checkbox" data-bot="exit.onRugFlag"${r.exit.onRugFlag ? ' checked' : ''}> Sell when a hard red flag appears</label>
+      </div>
+      <div class="fcol"><h4>Position size</h4>
+        ${botField('Paper money per buy', 'size.stakeUsd', '$')}
+        ${botField('Most positions at once', 'size.maxOpen', '')}
+        ${botField('Cost charged per side', 'size.costPct', '%')}
+        ${botField('Starting balance', 'size.startUsd', '$', 'used on reset')}
+      </div>
+    </div>`;
+}
+function renderBotSummary() {
+  const d = describeRules(bot.rules);
+  $('botBuys').innerHTML = d.buys.map((s) => `<li class="pro">${esc(s)}</li>`).join('');
+  $('botSells').innerHTML = d.sells.map((s) => `<li class="flag">${esc(s)}</li>`).join('') + `<li class="muted" style="padding-left:0;margin-top:6px">${esc(d.sizing)}</li>`;
+}
+function onBotInput(e) {
+  const el = e.target;
+  const r = bot.rules;
+  const numOrOff = () => { const v = el.value.trim() === '' ? NaN : Number(el.value); return Number.isFinite(v) && v >= 0 ? v : null; };
+  if (el.dataset.blimit) { const v = numOrOff(); if (v == null) delete r.entry.limits[el.dataset.blimit]; else r.entry.limits[el.dataset.blimit] = v; }
+  else if (el.dataset.bswitch) { if (el.checked) r.entry.switches[el.dataset.bswitch] = true; else delete r.entry.switches[el.dataset.bswitch]; }
+  else if (el.dataset.bot === 'feed') r.feed = el.value;
+  else if (el.dataset.bot) {
+    const [sec, key] = el.dataset.bot.split('.');
+    if (el.type === 'checkbox') r[sec][key] = el.checked;
+    else {
+      const v = numOrOff();
+      // These cannot be switched off, only changed.
+      const required = { 'entry.minScore': 0, 'size.stakeUsd': 1, 'size.maxOpen': 1, 'size.costPct': 0, 'size.startUsd': 10 };
+      if (el.dataset.bot in required) { if (v != null && v >= required[el.dataset.bot]) r[sec][key] = key === 'maxOpen' ? Math.min(50, Math.round(v)) : v; }
+      else r[sec][key] = v;
+    }
+  } else return;
+  saveBot(bot);
+  renderBotSummary();
+}
+function renderBotState() {
+  const pf = bot.pf;
+  const st = botStats(pf);
+  $('botToggle').textContent = bot.rules.enabled ? 'Pause buying' : 'Resume buying';
+  $('botToggle').classList.toggle('active', !bot.rules.enabled);
+  const tile = (k, v) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  $('botStats').innerHTML = `<div class="kv botkv">${tile('Equity', fmtUsd(st.equity))}${tile('Return', fmtPct(st.returnPct))}${tile('Paper cash', fmtUsd(pf.cash))}${tile('Open', pf.open.length)}${tile('Closed', st.closed)}${tile('Win rate', st.closed ? Math.round((100 * st.wins) / st.closed) + '%' : '-')}${tile('Avg trade', st.closed ? fmtPct(st.avgPct) : '-')}${tile('Best / worst', st.closed ? `${fmtPct(st.best)} / ${fmtPct(st.worst)}` : '-')}</div>
+    <p class="sub" style="margin-top:10px">${bot.rules.enabled ? 'Running' : 'Paused (existing positions are still managed)'} since ${ago(pf.startedAt)} ago. Last check ${pf.lastStep ? ago(pf.lastStep) + ' ago' : 'pending'}.${Object.keys(st.byReason).length ? ' Exits so far: ' + Object.entries(st.byReason).map(([k, v]) => `${esc(k)} x${v.n} (${v.pnl >= 0 ? '+' : '-'}$${Math.abs(v.pnl).toFixed(0)})`).join(', ') + '.' : ''}</p>`;
+  const svg = $('botEquity');
+  const curve = pf.curve || [];
+  if (curve.length > 1) {
+    const vs = curve.map((c) => c[1]);
+    const lo = Math.min(...vs, pf.start);
+    const hi = Math.max(...vs, pf.start);
+    const y = (v) => 112 - ((v - lo) / Math.max(1e-9, hi - lo)) * 104;
+    const pts = curve.map((c, i) => `${((i / (curve.length - 1)) * 600).toFixed(1)},${y(c[1]).toFixed(1)}`).join(' ');
+    svg.innerHTML = `<line x1="0" x2="600" y1="${y(pf.start)}" y2="${y(pf.start)}" stroke="#2c3750" stroke-dasharray="4 4"/><polyline fill="none" stroke="${vs.at(-1) >= pf.start ? '#19d3a2' : '#ff5d6c'}" stroke-width="2" points="${pts}"/>`;
+  } else svg.innerHTML = '';
+  const why = (w) => `<div class="muted botwhy">${esc((w || []).join(' · '))}</div>`;
+  $('botOpen').innerHTML = pf.open.length
+    ? `<table class="mini"><thead><tr><th>Token</th><th>P&amp;L</th><th>Held</th><th class="l">Act</th></tr></thead><tbody>${pf.open.map((p) => `
+      <tr data-mint="${esc(p.mint)}"><td class="l"><b>$${esc(p.symbol)}</b>${p.live ? ' <span class="chip live">LIVE</span>' : ''}${why(p.why)}</td>
+      <td>${fmtPct(p.pct)}</td><td>${ago(p.t0)}</td>
+      <td class="l"><button class="btn sm" data-bot-close="${esc(p.mint)}" title="Close this paper position now">Close</button> <button class="btn buy sm" data-buysol="${settings.quickBuy}" data-mint="${esc(p.mint)}" title="Buy for real with ${settings.quickBuy} SOL (your wallet asks you to approve)">Buy ${settings.quickBuy}</button></td></tr>`).join('')}</tbody></table>`
+    : `<div class="empty">No open positions. ${bot.rules.enabled ? 'The bot buys when a token meets every buy rule.' : 'Buying is paused.'}</div>`;
+  const closed = pf.closed.slice(-25).reverse();
+  $('botClosed').innerHTML = closed.length
+    ? `<table class="mini"><thead><tr><th>Token</th><th>P&amp;L</th><th>Held</th><th class="l">Sold because</th></tr></thead><tbody>${closed.map((c) => `
+      <tr data-mint="${esc(c.mint)}"><td class="l"><b>$${esc(c.symbol)}</b> <span class="muted">score ${c.score}</span></td><td>${fmtPct(c.pct)}</td><td>${Math.max(1, Math.round((c.t1 - c.t0) / 60000))}m</td><td class="l">${esc(c.reason)}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">No closed trades yet.</div>';
+  const sr = state.paper?.rules;
+  $('botRef').innerHTML = `<ul class="reasons">
+    <li class="flag"><b>The scanner's bot</b> is a separate, fixed-rule paper bot that runs inside every scan (results are on the Bot performance tab). ${sr ? `It buys $${sr.STAKE_USD} of a token scoring ${sr.ENTRY_SCORE}+ with no hard red flags, at least ${fmtUsd(sr.MIN_LIQ)} liquidity and at least ${sr.MIN_AGE_MIN} minutes old, holding up to ${sr.MAX_OPEN}. It sells at +${Math.round(sr.TAKE_PROFIT * 100)}%, at ${Math.round(sr.STOP_LOSS * 100)}%, when a red flag appears, when liquidity drains, or after ${Math.round(sr.MAX_HOLD_MS / 3600e3)} hours.` : ''} Its rules are set in <code>scanner/paper.js</code>.</li>
+    <li class="flag"><b>Real money:</b> no bot here trades real funds. That would need a private key stored in the app, which this project does not do. To act on a paper buy yourself, use the Buy button beside the position: your wallet shows the transaction and you approve it.</li>
+    <li class="flag"><b>Limits of the simulation:</b> prices are sampled about every 10 seconds, fills are assumed at the sampled price plus the cost you set, and there is no price impact. Real results on thin pools will be worse.</li></ul>`;
+}
+function closePaper(mint) {
+  const i = bot.pf.open.findIndex((p) => p.mint === mint);
+  if (i < 0) return;
+  const p = bot.pf.open[i];
+  const cost = bot.rules.size.costPct / 100;
+  const proceeds = p.units * (p.last || 0) * (1 - cost);
+  bot.pf.cash += proceeds;
+  bot.pf.open.splice(i, 1);
+  bot.pf.closed.push({ mint: p.mint, symbol: p.symbol, t0: p.t0, t1: Date.now(), score: p.score, pct: +((proceeds / p.stake - 1) * 100).toFixed(1), pnl: +(proceeds - p.stake).toFixed(2), reason: 'closed by you', why: p.why });
+  saveBot(bot);
+  renderBotState();
+}
+async function runBot() {
+  const now = Date.now();
+  const scored = new Map((state.data?.tokens || []).map((t) => [t.mint, t]));
+  const cands = [];
+  if (bot.rules.feed !== 'live') for (const t of scored.values()) cands.push({ t, live: false });
+  if (bot.rules.feed !== 'scored') for (const t of live.list()) cands.push({ t, live: true });
+  const quoteOf = (mint) => {
+    const lt = live.get(mint);
+    const ref = scored.get(mint) || lt; // the fully checked version decides flags and score when there is one
+    let best = botQuotes.get(mint) || null;
+    if (lt && lt.price > 0 && (!best || (lt.upd || 0) > best.at)) best = { price: lt.price, liq: lt.liq, at: lt.upd || 0 };
+    return best ? { ...best, gated: ref ? gated(ref) : false, score: ref?.score?.total ?? null } : null;
+  };
+  let out = stepBot(bot.pf, bot.rules, cands, quoteOf, now);
+  // Fresh prices for what the bot holds and what it is about to buy (unmetered feed, at most one call).
+  const want = [...new Set([...bot.pf.open.map((p) => p.mint), ...out.needQuote])].filter((m) => now - (botQuotes.get(m)?.at || 0) > 8000).slice(0, 50);
+  let events = out.events;
+  if (want.length) {
+    try {
+      const r = await fetch(`${DAT}/v1/assets/search?query=${want.join(',')}`);
+      if (r.ok) for (const j of await r.json()) if (isMint(j?.id) && Number(j.usdPrice) > 0) botQuotes.set(j.id, { price: Number(j.usdPrice), liq: Number(j.liquidity) || null, at: Date.now() });
+    } catch { /* next round */ }
+    if (out.needQuote.length) { out = stepBot(bot.pf, bot.rules, cands, quoteOf, Date.now()); events = events.concat(out.events); }
+  }
+  for (const [m, q] of botQuotes) if (now - q.at > 30 * 60e3) botQuotes.delete(m);
+  if (events.length || now - (runBot.saved || 0) > 30000) { saveBot(bot); runBot.saved = now; }
+  for (const ev of events) toast(ev.type === 'buy' ? `Paper bot bought $${ev.symbol} (score ${ev.score})` : `Paper bot sold $${ev.symbol}: ${ev.reason} (${ev.pct >= 0 ? '+' : ''}${ev.pct}%)`);
+  if (document.querySelector('.tab.on')?.dataset.view === 'bot' && !document.hidden) renderBotState();
+}
+
 // ---------- trends ----------
 function renderTrends() {
   const all = state.trends?.narratives || [];
@@ -677,6 +822,7 @@ function renderLiveStatus() {
 let liveTimer = null;
 async function pollLive() {
   clearTimeout(liveTimer);
+  if (document.hidden && bot.pf.open.length) await runBot().catch(() => {}); // keep managing exits in a background tab
   if (!document.hidden) {
     const s = state.liveStat;
     s.polls++;
@@ -694,6 +840,7 @@ async function pollLive() {
     if (ok) { s.last = Date.now(); s.err = null; }
     else s.err = 'Live feed unreachable, retrying';
     live.prune();
+    if (s.polls % 2 === 1) await runBot().catch(() => {});
     if (s.polls % 6 === 0) live.save();
     renderLiveStatus();
     if (state.mode === 'live' && !busy) renderRows();
@@ -739,6 +886,11 @@ document.addEventListener('click', (e) => {
   if (el.closest('[data-fee]')) { settings.priorityFee = 'auto'; saveSettings(); return openSettings(); }
   if (el.closest('[data-clear-live]')) { live.clear(); renderLiveStatus(); if (state.mode === 'live') renderRows(); return openSettings(); }
 
+  if (el.closest('#botToggle')) { bot.rules.enabled = !bot.rules.enabled; saveBot(bot); return renderBotState(); }
+  if (el.closest('[data-bot-reset-pf]')) { if (confirm('Reset the paper portfolio? Open and closed paper trades are cleared. Your rules stay.')) { bot.pf = newPortfolio(bot.rules); saveBot(bot); renderBotState(); } return; }
+  if (el.closest('[data-bot-reset-rules]')) { bot.rules = resetRules(); saveBot(bot); renderBotForms(); renderBotSummary(); return renderBotState(); }
+  const bcl = el.closest('[data-bot-close]');
+  if (bcl) { e.stopPropagation(); return closePaper(bcl.dataset.botClose); }
   if (el.closest('#filterBtn')) { const p = $('filterPanel'); p.hidden = !p.hidden; return; }
   if (el.closest('[data-filter-reset]')) { filters = resetFilters(); renderFilterPanel(); live.prune(); return renderRows(); }
 
@@ -752,6 +904,7 @@ document.addEventListener('click', (e) => {
     document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('on', x === tab));
     document.querySelectorAll('.view').forEach((v) => v.classList.toggle('on', v.id === 'view-' + tab.dataset.view));
     if (tab.dataset.view === 'wallet') { renderHoldings(); if (currentWallet()) refreshHoldings(); }
+    if (tab.dataset.view === 'bot') { renderBotForms(); renderBotSummary(); renderBotState(); }
     return;
   }
   const th = el.closest('th[data-sort]');
@@ -769,6 +922,7 @@ document.addEventListener('keydown', (e) => {
 $('sort').addEventListener('change', (e) => { state.sort = e.target.value; renderRows(); });
 $('min').addEventListener('input', (e) => { $('minv').textContent = e.target.value; renderRows(); });
 $('filterPanel').addEventListener('input', onFilterInput);
+$('view-bot').addEventListener('input', onBotInput);
 $('modal').addEventListener('input', onSettingsInput);
 window.addEventListener('pagehide', () => live.save());
 document.addEventListener('visibilitychange', () => { if (document.hidden) live.save(); else pollLive(); });

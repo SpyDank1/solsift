@@ -52,7 +52,7 @@ export function createLiveStore({ isKeeper }) {
     }
     rescore(t);
     const first = rec ? rec.first : quiet ? now - 60000 : now;
-    Object.assign(t, { live: true, seen: first, tags: [] });
+    Object.assign(t, { live: true, seen: first, tags: [], upd: now });
     if (!rec && !quiet) added++;
     map.set(mint, { t, first, upd: now, full, keep: rec ? rec.keep : false });
   }
@@ -79,7 +79,7 @@ export function createLiveStore({ isKeeper }) {
 
   function save() {
     let rows = [...map.values()].filter((r) => r.keep).sort((a, b) => b.first - a.first).slice(0, CAPS.persist).map((r) => {
-      const { score, live, seen, tags, desc, src, ...t } = r.t; // the score is recomputed on load
+      const { score, live, seen, tags, desc, src, upd, ...t } = r.t; // the score is recomputed on load
       return [r.first, r.upd, r.full, t];
     });
     let json = JSON.stringify(rows);
@@ -102,7 +102,7 @@ export function createLiveStore({ isKeeper }) {
         if (!t || typeof t.mint !== 'string' || now - first > CAPS.keepMs || map.has(t.mint)) continue;
         t.ageMin = t.createdAt ? (now - t.createdAt) / 60000 : t.ageMin;
         rescore(t);
-        Object.assign(t, { live: true, seen: first, tags: [] });
+        Object.assign(t, { live: true, seen: first, tags: [], upd });
         map.set(t.mint, { t, first, upd, full: full || 0, keep: true });
         n++;
       }
